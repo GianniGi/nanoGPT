@@ -20,7 +20,7 @@ class LayerNorm(nn.Module):
 
     def __init__(self, ndim, bias):
         super().__init__()
-        self.weight = nn.Parameter(torch.ones(ndim))
+        self.weight = nn.Parameter(torch.ones(ndim)) ## qui specifichiamo la dimensione su cui LayerNorm deve lavorare, in questo caso lavora solo sulla colonne delle caratteristiche, ma nel caso di un'immagine potrebbero anche essere le ultime due dimensioni
         self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
 
     def forward(self, input):
