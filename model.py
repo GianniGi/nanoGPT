@@ -26,12 +26,12 @@ class LayerNorm(nn.Module):
     def forward(self, input):
         return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
 
-class CausalSelfAttention(nn.Module):
+class CausalSelfAttention(nn.Module): ## restituisce y, che ha la stessa dimensione di x, con x.shape == y.shape:= (B, T, C) == (B, T, n_embd)
 
     def __init__(self, config):
         super().__init__()
         assert config.n_embd % config.n_head == 0
-        # key, query, value projections for all heads, but in a batch
+        # key, query, value projections for all heads, but in a batch  ## matrici q, k, v unite in self.c_attn ed "affiancate" lungo le colonne
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
         # output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
@@ -42,19 +42,19 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
-        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
+        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')  ## The hasattr() function returns True if the specified object has an attribute with the given name ## Its dual is the dir() function which, returns a list of names of attributes (es variabili self.something) and methods of any object.
         if not self.flash:
             print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
             # causal mask to ensure that attention is only applied to the left in the input sequence
             self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
-                                        .view(1, 1, config.block_size, config.block_size))
+                                        .view(1, 1, config.block_size, config.block_size)) ## .view aggiunge in testa due dimensioni unitarie (1,1,...)
 
     def forward(self, x):
-        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
+        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd) ## cioè x.size() := (B, T, C) = (B, T, n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)  ## self.c_attn(x).size():= (B,T, 3*n_embd) ## q.size():= (B,T,n_embd) ## tensor.split(split_size_or_sections, dim=2) ## self.c_attn(x) è già una moltiplicazione matriciale equivalente alle singole moltiplicazioni matriciali, è come se le matrici query, key, value fossero affiancate lungo le colonne; visto che è una moltiplicazione riga per colonne, moltiplicare per una sola matrice composta da q,k,v affiancate è uguale a fare tre moltiplicazioni per ciascuna delle tre matrici q,k,v in modo indipendente
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)  ## usando view, aggiungo una dimensione a k. La dimensione è quella di n_head; (B, T, n_embd):= (B, T, n_head * (C//n_head)) --> (B, T, n_head, C//n_head) e poi transpose --> (B, n_head, T, C//n_head)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
@@ -64,18 +64,18 @@ class CausalSelfAttention(nn.Module):
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
         else:
             # manual implementation of attention
-            att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+            att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))  ## vedi sopra "if self.flash"
             att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
             att = F.softmax(att, dim=-1)
-            att = self.attn_dropout(att)
+            att = self.attn_dropout(att)  ## dropout si applica direttamente ai pesi di una matrice 
             y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side  ## .contiguous(), returns a contiguous in memory tensor containing the same data as self tensor
 
         # output projection
-        y = self.resid_dropout(self.c_proj(y))
-        return y
+        y = self.resid_dropout(self.c_proj(y)) ## y.shape == x.shape := (B, T, C) == (B, T, n_embd)
+        return y ## The output data has the same shape as the input data and represents the normalized activations of the layer across the features dimension. Dopo l'applicazione di LayerNorm la varianza delle caratteristiche è circa 1 per ciascuna istanza, calcolato lungo le righe, cha hanno dimensione ndim.
 
-class MLP(nn.Module):
+class MLP(nn.Module):  ## non modifica la dimensionalità di x
 
     def __init__(self, config):
         super().__init__()
@@ -91,7 +91,7 @@ class MLP(nn.Module):
         x = self.dropout(x)
         return x
 
-class Block(nn.Module):
+class Block(nn.Module):  ## applica LayerNorm, Self Attention, Skip Connections
 
     def __init__(self, config):
         super().__init__()
@@ -106,10 +106,10 @@ class Block(nn.Module):
         return x
 
 @dataclass
-class GPTConfig:
+class GPTConfig:  ## accedi agli attributi della classe con GPTConfig.block_size
     block_size: int = 1024
     vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
-    n_layer: int = 12
+    n_layer: int = 12  ## numero di blocchi
     n_head: int = 12
     n_embd: int = 768
     dropout: float = 0.0
@@ -123,14 +123,14 @@ class GPT(nn.Module):
         assert config.block_size is not None
         self.config = config
 
-        self.transformer = nn.ModuleDict(dict(
+        self.transformer = nn.ModuleDict(dict( ## accedi p.e. al layer wte con self.transformer.wte
             wte = nn.Embedding(config.vocab_size, config.n_embd),
             wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
-            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]), ## config.n_layer := numero di blocchi; nn.ModuleList(list())
             ln_f = LayerNorm(config.n_embd, bias=config.bias),
         ))
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)  ## viene applicato a x per ottenere le logits
         # with weight tying when using torch.compile() some warnings get generated:
         # "UserWarning: functional_call was passed multiple values for tied weights.
         # This behavior is deprecated and will be an error in future versions"
@@ -159,7 +159,7 @@ class GPT(nn.Module):
             n_params -= self.transformer.wpe.weight.numel()
         return n_params
 
-    def _init_weights(self, module):
+    def _init_weights(self, module):  ## When the method is called, it takes a module as input, which is checked to see if it is an instance of nn.Linear or nn.Embedding. 
         if isinstance(module, nn.Linear):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
             if module.bias is not None:
@@ -167,9 +167,9 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None): ## il metodo forward viene chiamato da train.py con: logits, loss = model(X, Y); x.shape := (batch_size, block_size)
         device = idx.device
-        b, t = idx.size()
+        b, t = idx.size()  ## è importante ricordare da dove siamo partiti
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
         pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
@@ -183,11 +183,12 @@ class GPT(nn.Module):
 
         if targets is not None:
             # if we are given some desired targets also calculate the loss
-            logits = self.lm_head(x)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+            logits = self.lm_head(x) ## (b, t, n_embd) --> (b, t, vocab_size) ## the logits in a transformer model are the unnormalized predictions produced by the final linear layer before applying the softmax activation function. They serve as input to the softmax function, which converts them into probabilities for classification tasks. Se usi nn.CrossEntropyLoss, non serve nn.Softmax
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)  ## (b,t,vocab_size) --> (b*t, vocab_size); logits.view(-1, logits.size(-1)), è come lo "stretch" del video, in cui appiattisce b e t: reshapes the predicted logits tensor to a 2D tensor with size (batch_size * seq_len, num_classes), where seq_len is the sequence length of the input and num_classes is the number of possible classes. Similarly, targets.view(-1) flattens the true targets tensor to a 1D tensor with size (batch_size * seq_len). The ignore_index parameter is set to -1 which means that the loss will ignore all instances where the target value is -1. This is often used when padding is added to sequences to make them the same length, and -1 is used as a placeholder value for the padding.
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position
-            logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
+            logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim  ## ricorda che x.shape = (b,t,n_embd), e che self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+
             loss = None
 
         return logits, loss
@@ -279,7 +280,7 @@ class GPT(nn.Module):
         print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
         # Create AdamW optimizer and use the fused version if it is available
         fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
-        use_fused = fused_available and device_type == 'cuda'
+        use_fused = fused_available and device_type == 'cuda' ## The Signature object represents the call signature of a callable object and its return annotation. To retrieve a Signature object, use the signature() function. es.: >>> def foo(a, *, b:int, **kwargs):... >>> sig = signature(foo) >>> str(sig) --> '(a, *, b:int, **kwargs)'
         extra_args = dict(fused=True) if use_fused else dict()
         optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)
         print(f"using fused AdamW: {use_fused}")
@@ -315,16 +316,16 @@ class GPT(nn.Module):
             # forward the model to get the logits for the index in the sequence
             logits, _ = self(idx_cond)
             # pluck the logits at the final step and scale by desired temperature
-            logits = logits[:, -1, :] / temperature
+            logits = logits[:, -1, :] / temperature ## più la temperatura è piccola, più l'applicazione di softmax su logits grandi tende a one-hot
             # optionally crop the logits to only the top k options
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                logits[logits < v[:, [-1]]] = -float('Inf')
+                logits[logits < v[:, [-1]]] = -float('Inf')  ## se logits[i] è minore di tutti i top_k, diventa '-inf', quindi diventa 0 dopo softmax
             # apply softmax to convert logits to (normalized) probabilities
             probs = F.softmax(logits, dim=-1)
             # sample from the distribution
             idx_next = torch.multinomial(probs, num_samples=1)
             # append sampled index to the running sequence and continue
-            idx = torch.cat((idx, idx_next), dim=1)
+            idx = torch.cat((idx, idx_next), dim=1)  ## il transformer genera (predice) una parola alla volta, usando block_size parole precedenti
 
         return idx
